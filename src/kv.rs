@@ -1,5 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
-use std::convert::{From, TryFrom};
+use std::convert::{AsRef, From, TryFrom};
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::net::Ipv6Addr;
@@ -8,19 +8,16 @@ use bincode;
 use bytes::{BufMut, BytesMut};
 use itertools::{chain, enumerate, Itertools};
 use serde::{de::DeserializeOwned, Serialize};
-use thiserror::Error;
+
+use crate::KvsError;
 
 const ADDR_PREFIX: [u8; 2] = [0xbf, 0x51]; // BF51 IPv6 Prefix
 const CHUNK_SIZE: usize = 96 / 8;
 
-#[derive(Error, Debug)]
-pub enum KvError {
-    #[error("Could not decode: {0}")]
-    DecodeError(String),
-    #[error("Could not encode: {0}")]
-    EncodeError(String),
-}
-
+/// `Key` ID for the Key/Value Store
+///
+/// Must be Hashable as it's used as a key in HashTable
+/// and (De)Serializable for sending/receiving on the wire
 #[derive(Debug)]
 pub struct Key<K>
 where
@@ -33,19 +30,20 @@ impl<K> Key<K>
 where
     K: Debug + Display + Hash + Serialize + DeserializeOwned,
 {
+    /// Create a new [Key](struct.Key.html) with the given key item
     pub fn new(key: K) -> Self {
         Self { inner: key }
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.as_bytes().len()
     }
 
-    pub fn as_bytes(&self) -> Vec<u8> {
+    fn as_bytes(&self) -> Vec<u8> {
         bincode::serialize(&self.inner).expect("Can encode")
     }
 
-    pub fn get_hash(&self) -> u64 {
+    fn get_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         self.inner.hash(&mut hasher);
         hasher.finish()
@@ -61,6 +59,9 @@ where
     }
 }
 
+/// `Value` of a Key/Value pair
+///
+/// Must be (De)Serializable for sending/receiving on the wire
 #[derive(Debug)]
 pub struct Value<V>(V)
 where
@@ -70,20 +71,27 @@ impl<V> Value<V>
 where
     V: Debug + Display + Serialize + DeserializeOwned,
 {
+    /// Create a new [Key](struct.Key.html) with the given key item
     pub fn new(value: V) -> Self {
         Self(value)
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.as_bytes().len()
     }
 
-    pub fn value(&self) -> &V {
-        &self.0
-    }
-
-    pub fn as_bytes(&self) -> Vec<u8> {
+    fn as_bytes(&self) -> Vec<u8> {
         bincode::serialize(&self.0).expect("Can encode")
+    }
+}
+
+impl<V> AsRef<V> for Value<V>
+where
+    V: Debug + Display + Serialize + DeserializeOwned,
+{
+    #[inline]
+    fn as_ref(&self) -> &V {
+        &self.0
     }
 }
 
@@ -96,6 +104,11 @@ where
     }
 }
 
+/// A [KeyValue](struct.KeyValue.html) pair, stored internally as a value in the [KvStore](struct.KvStore.html) HashMap
+///
+/// Keeps track of the key hash for checksum & comparison, along with a version
+/// that increments each time the value is updated
+///    (for evicting aged out versions locally and syncing remote peers)
 #[derive(Debug)]
 pub struct KeyValue<K, V>
 where
@@ -113,11 +126,12 @@ where
     K: Debug + Display + Hash + Serialize + DeserializeOwned,
     V: Debug + Display + Serialize + DeserializeOwned,
 {
+    /// Create a new [KeyValue](struct.KeyValue.html) pair by values for K, V
     pub fn new(key: K, value: V) -> Self {
         Self::with_version(key, value, 0)
     }
 
-    pub fn with_version(key: K, value: V, version: u16) -> Self {
+    fn with_version(key: K, value: V, version: u16) -> Self {
         let _key = Key::new(key);
         let hash = _key.get_hash();
         Self {
@@ -128,25 +142,33 @@ where
         }
     }
 
+    /// Replace the current `Value` and increment the [KeyValue](struct.KeyValue.html) version
     pub fn update(&mut self, value: V) {
         self.value = Value::new(value);
         self.version += 1;
     }
 
-    pub fn as_bytes(&self) -> Vec<u8> {
+    fn as_bytes(&self) -> Vec<u8> {
         [self.key.as_bytes(), self.value.as_bytes()].concat()
     }
 
-    pub fn key_hash(&self) -> u64 {
+    fn key_hash(&self) -> u64 {
         self.hash
     }
 
     pub fn version(&self) -> u16 {
         self.version
     }
+}
 
-    pub fn value(&self) -> &V {
-        self.value.value()
+impl<K, V> AsRef<V> for KeyValue<K, V>
+where
+    K: Debug + Display + Hash + Serialize + DeserializeOwned,
+    V: Debug + Display + Serialize + DeserializeOwned,
+{
+    #[inline]
+    fn as_ref(&self) -> &V {
+        self.value.as_ref()
     }
 }
 
@@ -160,17 +182,25 @@ where
     }
 }
 
+/// An IPv6 Unicast Prefix to encode a portion of a [KeyValue](struct.KeyValue.html) pair
 #[derive(Debug)]
 pub struct Prefix(Ipv6Addr);
 
 impl Prefix {
-    pub fn sequence(&self) -> u16 {
+    fn sequence(&self) -> u16 {
         self.0.segments()[1]
     }
 
-    // pub fn data(&self) -> &[u8] {
+    // fn data(&self) -> &[u8] {
     //     &self.0.octets()[2..]
     // }
+}
+
+impl AsRef<Ipv6Addr> for Prefix {
+    #[inline]
+    fn as_ref(&self) -> &Ipv6Addr {
+        &self.0
+    }
 }
 
 impl From<&BytesMut> for Prefix {
@@ -183,6 +213,7 @@ impl From<&BytesMut> for Prefix {
     }
 }
 
+/// An IPv6 Unicast Next Hop to encode details about a [KeyValue](struct.KeyValue.html) pair
 #[derive(Debug)]
 pub struct NextHop(Ipv6Addr);
 
@@ -203,6 +234,13 @@ impl NextHop {
     }
 }
 
+impl AsRef<Ipv6Addr> for NextHop {
+    #[inline]
+    fn as_ref(&self) -> &Ipv6Addr {
+        &self.0
+    }
+}
+
 impl From<&BytesMut> for NextHop {
     fn from(bytes: &BytesMut) -> Self {
         let next_hop = Ipv6Addr::from([
@@ -213,21 +251,22 @@ impl From<&BytesMut> for NextHop {
     }
 }
 
+/// One of many [Prefix](struct.Prefix.html)/[NextHop](struct.NextHop.html) pairs used to encode a [KeyValue](struct.KeyValue.html) pair in BGP Messages
+///
+/// Collected in sequential order as a `RouteCollection` for encoding & decoding
 #[derive(Debug)]
 pub struct Route {
-    prefix: Prefix,
-    next_hop: NextHop,
+    pub prefix: Prefix,
+    pub next_hop: NextHop,
 }
 
 impl Route {
-    pub fn sequence(&self) -> u16 {
+    fn sequence(&self) -> u16 {
         self.prefix.sequence()
     }
 }
 
-/// Represents one `KeyValue` as a collection of IPv6 Unicast Routes
-///
-/// Each `KeyValue` can represent 6_5535 * 96 bytes (6_291_360 bytes)
+/// Represents one [KeyValue](struct.KeyValue.html) as a collection of IPv6 Unicast Routes
 #[derive(Debug)]
 pub struct RouteCollection(Vec<Route>);
 
@@ -243,7 +282,7 @@ where
     K: Debug + Display + Hash + Serialize + DeserializeOwned,
     V: Debug + Display + Serialize + DeserializeOwned,
 {
-    type Error = KvError;
+    type Error = KvsError;
 
     fn try_from(kv: &KeyValue<K, V>) -> Result<Self, Self::Error> {
         let num_routes =
@@ -295,13 +334,13 @@ where
     K: Debug + Display + Hash + Serialize + DeserializeOwned,
     V: Debug + Display + Serialize + DeserializeOwned,
 {
-    type Error = KvError;
+    type Error = KvsError;
 
     fn try_from(routes: &RouteCollection) -> Result<Self, Self::Error> {
         let first = routes
             .0
             .first()
-            .ok_or_else(|| KvError::DecodeError(format!("At least one route should exist")))?;
+            .ok_or_else(|| KvsError::DecodeError(format!("At least one route should exist")))?;
 
         let key_length = first.prefix.0.segments()[2];
         let val_length = first.prefix.0.segments()[3];
@@ -322,11 +361,11 @@ where
 
         let (key, bytes) = bytes.split_at(key_length as usize);
         let (value, _) = bytes.split_at(val_length as usize);
-        let version = version.ok_or_else(|| KvError::DecodeError(format!("Missing version")))?;
+        let version = version.ok_or_else(|| KvsError::DecodeError(format!("Missing version")))?;
         let key = bincode::deserialize(&key)
-            .map_err(|_e| KvError::DecodeError(format!("Couldn't decode key")))?;
+            .map_err(|_e| KvsError::DecodeError(format!("Couldn't decode key")))?;
         let value = bincode::deserialize(&value)
-            .map_err(|_e| KvError::DecodeError(format!("Couldn't decode value")))?;
+            .map_err(|_e| KvsError::DecodeError(format!("Couldn't decode value")))?;
         let kv = Self::with_version(key, value, version);
         Ok(kv)
     }
