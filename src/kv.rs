@@ -205,10 +205,9 @@ impl AsRef<Ipv6Addr> for Prefix {
 
 impl From<&BytesMut> for Prefix {
     fn from(bytes: &BytesMut) -> Self {
-        let prefix = Ipv6Addr::from([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-        ]);
+        let mut octets = [0u8; 16];
+        octets.copy_from_slice(&bytes[..16]);
+        let prefix = Ipv6Addr::from(octets);
         Self(prefix)
     }
 }
@@ -227,10 +226,9 @@ impl NextHop {
     }
 
     pub fn hash(&self) -> u64 {
-        let data = &self.0.octets()[8..];
-        u64::from_be_bytes([
-            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-        ])
+        let mut data = [0u8; 8];
+        data.copy_from_slice(&self.0.octets()[8..]);
+        u64::from_be_bytes(data)
     }
 }
 
@@ -243,10 +241,9 @@ impl AsRef<Ipv6Addr> for NextHop {
 
 impl From<&BytesMut> for NextHop {
     fn from(bytes: &BytesMut) -> Self {
-        let next_hop = Ipv6Addr::from([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-        ]);
+        let mut octets = [0u8; 16];
+        octets.copy_from_slice(&bytes[..16]);
+        let next_hop = Ipv6Addr::from(octets);
         Self(next_hop)
     }
 }
