@@ -5,6 +5,8 @@ authors = ["Mat Wood <mat@thepacketgeek.com>"]
 edition = "2018"
 
 [dependencies]
+bincode = "1.2"
 bytes = "0.5"
 itertools = "0.9"
 thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
