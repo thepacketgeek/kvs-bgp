@@ -9,14 +9,17 @@
 //! ## [Prefix](struct.Prefix.html) encoding is as follows:
 //!
 //! First prefix for a [KeyValue](struct.KeyValue.html) pair:
-//!
-//!     bits: | 16 :  16    :    16      :     16       :      64        |
-//!     addr: |BF51: seq #  : key length : value length :     data       | /128
+//! ```ignore
+//! bits: | 16 :  16    :    16      :     16       :      64        |
+//! addr: |BF51: seq #  : key length : value length :     data       | /128
+//! ```
 //!
 //! Subsequent prefixes for a [KeyValue](struct.KeyValue.html) pair:
 //!
-//!     bits: | 16 :  16    :                   96                       |
-//!     addr: |BF51: seq #  :                  data                      | /128
+//! ```ignore
+//! bits: | 16 :  16    :                   96                       |
+//! addr: |BF51: seq #  :                  data                      | /128
+//! ```
 //!
 //! ### Notes:
 //! - BF51 Prefix
@@ -27,12 +30,16 @@
 //!     so best-path selection doesn't filter prefixes
 //!   - Allows for 65_535 prefixes per [KeyValue](struct.KeyValue.html) pair, and given 12 bytes per prefix
 //!     provides ~768 Kb per [KeyValue](struct.KeyValue.html) pair
+//! - Data
+//!   - Serialized to bytes using [Serde](https://github.com/serde-rs/serde) with [bincode](https://github.com/servo/bincode) serialization
 //!
 //!
 //! ## [NextHop](struct.NextHop.html) encoding is as follows:
 //!
-//!     bits: | 16 :   16    :  16   :  16  :          64                |
-//!     addr: |BF51: version : seq # : rsvd :       key hash             | /128
+//! ```ignore
+//! bits: | 16 :   16    :  16   :  16  :          64                |
+//! addr: |BF51: version : seq # : rsvd :       key hash             | /128
+//! ```
 //!
 //! ### Notes:
 //! - BF51 Prefix
@@ -52,18 +59,19 @@
 //!
 //! ## Example
 //! The [KeyValue](struct.KeyValue.html) pair "MyKey" : "Some Value" would be represented as:
-//!
-//!     | Seq # | Prefix                                   | NextHop                            |
-//!     | 0     | BF51:0:D:12:500::/128                    | BF51::7911:E0FA:7BEA:920B/128      |
-//!     | 1     | BF51:101:4D79:4B65:790A::/128            | BF51:0:1:0:7911:E0FA:7BEA:920B/128 |
-//!     | 2     | BF51:202:53:6F6D:6520:5661:6C75:6500/128 | BF51:0:2:0:7911:E0FA:7BEA:920B/128 |
+//! ```ignore
+//! | Seq # | Prefix                                   | NextHop                              |
+//! | 0     | BF51:0:D:12:500::                   /128 | BF51::7911:E0FA:7BEA:920B       /128 |
+//! | 1     | BF51:1:4D79:4B65:790A::             /128 | BF51:0:1:0:7911:E0FA:7BEA:920B  /128 |
+//! | 2     | BF51:2:53:6F6D:6520:5661:6C75:6500  /128 | BF51:0:2:0:7911:E0FA:7BEA:920B  /128 |
+//! ```
+
+/// Internal `KeyValue` representations for Encoding/Decoding as BGP Updates
+pub mod kv;
 #[warn(missing_docs)]
 
 /// In-memory Key/Value store that stores `KeyValue` pairs and synchronizes with BGP peers
 pub mod store;
-use store::KvStore;
-/// Internal `KeyValue` representations for Encoding/Decoding as BGP Updates
-pub mod kv;
 
 use thiserror::Error;
 

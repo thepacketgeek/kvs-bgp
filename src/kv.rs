@@ -206,7 +206,7 @@ impl AsRef<Ipv6Addr> for Prefix {
 impl From<&BytesMut> for Prefix {
     fn from(bytes: &BytesMut) -> Self {
         let prefix = Ipv6Addr::from([
-            bytes[0], bytes[1], bytes[3], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ]);
         Self(prefix)
@@ -244,7 +244,7 @@ impl AsRef<Ipv6Addr> for NextHop {
 impl From<&BytesMut> for NextHop {
     fn from(bytes: &BytesMut) -> Self {
         let next_hop = Ipv6Addr::from([
-            bytes[0], bytes[1], bytes[3], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ]);
         Self(next_hop)
@@ -303,6 +303,8 @@ where
         {
             prefix_buf.put(&ADDR_PREFIX[..]);
             prefix_buf.put_u16(i as u16);
+            dbg!(&i);
+            dbg!(&prefix_buf);
             let mut remaining = CHUNK_SIZE;
             for byte in chunk {
                 prefix_buf.put_u8(*byte);
@@ -417,14 +419,13 @@ mod tests {
 
         kv.update(24);
         assert_eq!(kv.version(), 1);
-        // assert_eq!(kv.value, 24);
+        assert_eq!(kv.value.as_ref(), &24);
     }
 
     #[test]
     fn round_trip() {
-        let kv = KeyValue::new("MyKey".to_owned(), "This is a pretty long value".to_owned());
+        let kv = KeyValue::new("MyKey".to_owned(), "Some Value".to_owned());
         let routes: RouteCollection = (&kv).try_into().unwrap();
-
         let kv2: KeyValue<String, String> = (&routes).try_into().unwrap();
         assert_eq!(kv.key_hash(), kv2.key_hash());
         assert_eq!(kv.key.to_string(), kv2.key.to_string());
