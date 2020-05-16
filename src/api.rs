@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use log::debug;
 use tokio::sync::Mutex;
-use warp;
+use warp::{self, Filter};
 
 use crate::store::KvStore;
 
@@ -59,4 +59,30 @@ pub async fn remove_pair(key: String, store: Store) -> Result<impl warp::Reply, 
                 Err(warp::reject::not_found())
             }
         })
+}
+
+/// Defined API routes for Key/Value CRUD
+pub fn get_routes(store: Store) -> warp::filters::BoxedFilter<(impl warp::Reply,)> {
+    let state = warp::any().map(move || store.clone());
+    let status = warp::path!("status").map(|| "Alive!\n".to_owned());
+
+    let get_key = warp::get()
+        .and(warp::path!("get" / String))
+        .and(warp::path::end())
+        .and(state.clone())
+        .and_then(get_key);
+
+    let insert_key = warp::put()
+        .and(warp::path!("insert" / String / String))
+        .and(warp::path::end())
+        .and(state.clone())
+        .and_then(insert_pair);
+
+    let remove = warp::delete()
+        .and(warp::path!("remove" / String))
+        .and(warp::path::end())
+        .and(state.clone())
+        .and_then(remove_pair);
+
+    status.or(get_key).or(insert_key).or(remove).boxed()
 }

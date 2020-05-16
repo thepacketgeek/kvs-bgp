@@ -74,6 +74,9 @@ pub mod api;
 /// Internal `KeyValue` representations for Encoding/Decoding as BGP Updates
 pub mod kv;
 
+/// BGP Peering/Update logic
+pub mod peering;
+
 /// In-memory Key/Value store that stores `KeyValue` pairs and synchronizes with BGP peers
 pub mod store;
 pub use store::KvStore;

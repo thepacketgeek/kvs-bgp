@@ -1,13 +1,14 @@
-use std::sync::Arc;
+use std::error::Error;
 use std::net::IpAddr;
+use std::sync::Arc;
 use structopt::StructOpt;
 
 use env_logger::Builder;
-use log::{LevelFilter, info};
+use log::{info, LevelFilter};
 use tokio::sync::Mutex;
-use warp::{self, Filter};
+use warp;
 
-use kvs_bgp::{api, store::KvStore};
+use kvs_bgp::{api, peering::BgpPeerings, store::KvStore};
 
 #[derive(StructOpt, Debug)]
 #[structopt(
@@ -19,20 +20,27 @@ use kvs_bgp::{api, store::KvStore};
 ]
 /// KVS-BGP Server
 pub struct Args {
+    /// BGPd config file for peering details
+    config_path: String,
     /// Host address to use for HTTP API
-    #[structopt(short, long, default_value = "127.0.0.1")]
-    address: IpAddr,
+    #[structopt(long, default_value = "127.0.0.1")]
+    api_address: IpAddr,
     /// Host port to use for HTTP API
-    #[structopt(short, long, default_value = "3030")]
-    port: u16,
+    #[structopt(long, default_value = "3030")]
+    api_port: u16,
+    /// Host address to use for BGPd
+    #[structopt(long, default_value = "127.0.0.1")]
+    bgp_address: IpAddr,
+    /// Host port to use for BGPd
+    #[structopt(long, default_value = "179")]
+    bgp_port: u16,
     /// Log verbosity (additive [-vv] for debug, trace, etc.)
     #[structopt(short, parse(from_occurrences))]
     pub verbose: u8,
 }
 
-
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::from_args();
 
     let (kvs_level, other_level) = match args.verbose {
@@ -48,30 +56,22 @@ async fn main() {
     info!("Logging at levels {}/{}", kvs_level, other_level);
 
     let kv_store = Arc::new(Mutex::new(KvStore::new()));
-    let state = warp::any().map(move || kv_store.clone());
 
-    let status = warp::path!("status").map(|| "Alive!\n".to_owned());
+    let mut bgp_server =
+        BgpPeerings::with_config(&args.config_path, args.bgp_address, args.bgp_port).await?;
 
-    let get_key = warp::get()
-        .and(warp::path!("get" / String))
-        .and(warp::path::end())
-        .and(state.clone())
-        .and_then(api::get_key);
+    let api_routes = api::get_routes(kv_store.clone());
+    tokio::spawn(async move {
+        info!(
+            "Starting HTTP API on {}:{}",
+            args.api_address, args.api_port
+        );
+        warp::serve(api_routes)
+            .run((args.api_address, args.api_port))
+            .await;
+    });
 
-    let insert_key = warp::put()
-        .and(warp::path!("insert" / String / String))
-        .and(warp::path::end())
-        .and(state.clone())
-        .and_then(api::insert_pair);
+    bgp_server.serve().await?;
 
-    let remove = warp::delete()
-        .and(warp::path!("remove" / String))
-        .and(warp::path::end())
-        .and(state.clone())
-        .and_then(api::remove_pair);
-
-    let routes = status.or(get_key).or(insert_key).or(remove);
-
-    info!("Starting HTTP API on {}:{}", args.address, args.port);
-    warp::serve(routes).run((args.address, args.port)).await;
+    Ok(())
 }
