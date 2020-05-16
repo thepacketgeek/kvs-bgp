@@ -1,11 +1,18 @@
 # KVS-BGP
 A Key/Value store that allows for eventually consistent, distributed synchronization using BGP
 
-## Goals
-- Integrate with a BGP Daemon (E.g. exabgp, GoBGP, bgpd-rs)
+## Why BGP?
+- BGP is a reliable way to distribute bytes over an arbitrary number of participating peers
+  - Using eBGP, we can guarantee every peer will have a consistent view of the data
 - Community support for adding categories to `KeyValue` pairs
+  - Allows participating nodes to Pub/Sub to specific categories
   - Use BGP Policy to filter inbound/outbound synchronization of categories
+- Many tools exist to inject the BGP routes into a peer mesh
+  - E.g. [exabgp](https://github.com/Exa-Networks/exabgp), [gobgp](https://github.com/osrg/gobgp), [bgpd-rs](https://github.com/thepacketgeek/bgpd-rs)
 
+
+## Key/Value API
+The current API is just PoC and should likely replicate other successful KeyValue APIs to work with existing clients (Eg. Redis)
 
 # Internal representation of `KeyValue` pairs
 

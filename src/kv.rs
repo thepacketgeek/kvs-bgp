@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 use std::collections::hash_map::DefaultHasher;
 use std::convert::{AsRef, From, TryFrom};
 use std::fmt::{self, Debug, Display};
@@ -83,6 +84,10 @@ where
     fn as_bytes(&self) -> Vec<u8> {
         bincode::serialize(&self.0).expect("Can encode")
     }
+
+    fn into_value(self) -> V {
+        self.0
+    }
 }
 
 impl<V> AsRef<V> for Value<V>
@@ -156,8 +161,14 @@ where
         self.hash
     }
 
+    /// The version of this `KeyValue` (incremented for every update)
     pub fn version(&self) -> u16 {
         self.version
+    }
+
+    /// Extract the value from this `KeyValue`, consuming this struct
+    pub fn into_value(self) -> V {
+        self.value.into_value()
     }
 }
 
@@ -183,10 +194,11 @@ where
 }
 
 /// An IPv6 Unicast Prefix to encode a portion of a [KeyValue](struct.KeyValue.html) pair
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Prefix(Ipv6Addr);
 
 impl Prefix {
+    /// [Route](struct.Route.html) sequence for this [KeyValue](struct.KeyValue.html)
     fn sequence(&self) -> u16 {
         self.0.segments()[1]
     }
@@ -213,18 +225,21 @@ impl From<&BytesMut> for Prefix {
 }
 
 /// An IPv6 Unicast Next Hop to encode details about a [KeyValue](struct.KeyValue.html) pair
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NextHop(Ipv6Addr);
 
 impl NextHop {
+    /// The version of this `KeyValue` (incremented for every update)
     pub fn version(&self) -> u16 {
         self.0.segments()[1]
     }
 
+    /// [Route](struct.Route.html) sequence for this [KeyValue](struct.KeyValue.html)
     pub fn sequence(&self) -> u16 {
         self.0.segments()[2]
     }
 
+    /// The `Key` hash for this [KeyValue](struct.KeyValue.html)
     pub fn hash(&self) -> u64 {
         let mut data = [0u8; 8];
         data.copy_from_slice(&self.0.octets()[8..]);
@@ -251,10 +266,10 @@ impl From<&BytesMut> for NextHop {
 /// One of many [Prefix](struct.Prefix.html)/[NextHop](struct.NextHop.html) pairs used to encode a [KeyValue](struct.KeyValue.html) pair in BGP Messages
 ///
 /// Collected in sequential order as a `RouteCollection` for encoding & decoding
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Route {
-    pub prefix: Prefix,
-    pub next_hop: NextHop,
+    prefix: Prefix,
+    next_hop: NextHop,
 }
 
 impl Route {
@@ -268,9 +283,18 @@ impl Route {
 pub struct RouteCollection(Vec<Route>);
 
 impl RouteCollection {
-    pub fn new(mut routes: Vec<Route>) -> Self {
+    fn from_routes(mut routes: Vec<Route>) -> Result<Self, KvsError> {
         routes.sort_by_key(|r| r.sequence());
-        Self(routes)
+        // Confirm this collection contains all the necessary routes
+        for (i, route) in routes.iter().enumerate() {
+            if route.sequence() != i as u16 {
+                return Err(KvsError::DecodeError(format!(
+                    "Missing route sequence # {}",
+                    i
+                )));
+            }
+        }
+        Ok(Self(routes))
     }
 }
 
@@ -300,8 +324,6 @@ where
         {
             prefix_buf.put(&ADDR_PREFIX[..]);
             prefix_buf.put_u16(i as u16);
-            dbg!(&i);
-            dbg!(&prefix_buf);
             let mut remaining = CHUNK_SIZE;
             for byte in chunk {
                 prefix_buf.put_u8(*byte);
@@ -324,7 +346,7 @@ where
 
             routes.push(Route { prefix, next_hop });
         }
-        Ok(RouteCollection(routes))
+        RouteCollection::from_routes(routes)
     }
 }
 
@@ -427,5 +449,20 @@ mod tests {
         assert_eq!(kv.key_hash(), kv2.key_hash());
         assert_eq!(kv.key.to_string(), kv2.key.to_string());
         assert_eq!(kv.value.to_string(), kv2.value.to_string());
+    }
+
+    #[test]
+    fn missing_route() {
+        let kv = KeyValue::new(
+            "MyKey".to_owned(),
+            "Something longer that needs multiple routes".to_owned(),
+        );
+        let routes: Vec<_> = {
+            let rc: RouteCollection = (&kv).try_into().unwrap();
+            rc.0
+        };
+        let modified_routes = [&routes[0..3], &routes[4..]].concat();
+        let rc = RouteCollection::from_routes(modified_routes);
+        assert!(rc.is_err());
     }
 }

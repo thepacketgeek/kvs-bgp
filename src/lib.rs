@@ -22,7 +22,8 @@
 //! ```
 //!
 //! ### Notes:
-//! - BF51 Prefix
+//! - `BF51` Prefix
+//!   - Stands for "Bgp File 5tore v1"
 //!   - Used for easy identification and to make sure this
 //!     doesn't clobber public routes
 //! - Sequence Number
@@ -42,9 +43,6 @@
 //! ```
 //!
 //! ### Notes:
-//! - BF51 Prefix
-//!   - Used for easy identification and to make sure this
-//!     doesn't clobber public routes
 //! - Version
 //!   - Encoding of the [KeyValue](struct.KeyValue.html) version number
 //!   - During convergence of an updated [KeyValue](struct.KeyValue.html) pair, will provide unique Prefix/NextHop route
@@ -53,7 +51,7 @@
 //!   - Provides ordering for data decoding and creates unique routes
 //!     so best-path selection doesn't filter prefixes
 //! - Reserved
-//!   - Not currently used
+//!   - Not currently used  *(TODO: Use this for store action (Add, Update, Remove?))*
 //! - Key Hash
 //!   - Hash of the [KeyValue](struct.KeyValue.html) [Key](struct.Key.html), to differentiate this [NextHop](struct.NextHop.html) from other [KeyValue](struct.KeyValue.html) [NextHop](struct.NextHop.html)s
 //!
@@ -65,15 +63,23 @@
 //! | 1     | BF51:1:4D79:4B65:790A::             /128 | BF51:0:1:0:7911:E0FA:7BEA:920B  /128 |
 //! | 2     | BF51:2:53:6F6D:6520:5661:6C75:6500  /128 | BF51:0:2:0:7911:E0FA:7BEA:920B  /128 |
 //! ```
+//!
+//! ## KvStore
+//! The interface for storing and
+
+#[warn(missing_docs)]
+/// HTTP API for clients of the KeyValue store service
+pub mod api;
 
 /// Internal `KeyValue` representations for Encoding/Decoding as BGP Updates
 pub mod kv;
-#[warn(missing_docs)]
 
 /// In-memory Key/Value store that stores `KeyValue` pairs and synchronizes with BGP peers
 pub mod store;
+pub use store::KvStore;
 
 use thiserror::Error;
+use warp;
 
 /// Main error for Kvs library
 #[derive(Error, Debug)]
@@ -83,3 +89,5 @@ pub enum KvsError {
     #[error("Could not encode: {0}")]
     EncodeError(String),
 }
+
+impl warp::reject::Reject for KvsError {}
