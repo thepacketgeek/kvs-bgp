@@ -4,12 +4,34 @@ A Key/Value store that allows for eventually consistent, distributed synchroniza
 ## Why BGP?
 - BGP is a reliable way to distribute bytes over an arbitrary number of participating peers
   - Using eBGP, we can guarantee every peer will have a consistent view of the data
+  - As long as one peer remains online, your data will be around
 - Community support for adding categories to `KeyValue` pairs
   - Allows participating nodes to Pub/Sub to specific categories
   - Use BGP Policy to filter inbound/outbound synchronization of categories
 - Many tools exist to inject the BGP routes into a peer mesh
   - E.g. [exabgp](https://github.com/Exa-Networks/exabgp), [gobgp](https://github.com/osrg/gobgp), [bgpd-rs](https://github.com/thepacketgeek/bgpd-rs)
 
+## HTTP API for KeyValue CRUD
+Run the HTTP API with:
+```
+$ cargo run -- --port 8179
+```
+
+Then use your favorite HTTP client to make requests:
+```
+$ curl http://localhost:8179/insert/name/Mat --request PUT
+$ curl http://localhost:8179/get/name
+Mat
+$ curl http://localhost:8179/insert/favorite::protocol/BGP --request PUT
+$ curl http://localhost:8179/insert/favorite::food/Pizza --request PUT
+$ curl http://localhost:8179/insert/favorite::drink/Scotch --request PUT
+$ curl http://localhost:8179/get/favorite::drink
+Scotch
+$ curl http://localhost:8179/get/favorite::protocol
+BGP
+$ curl http://localhost:8179/get/favorite::food
+Pizza
+```
 
 ## Key/Value API
 The current API is just PoC and should likely replicate other successful KeyValue APIs to work with existing clients (Eg. Redis)
