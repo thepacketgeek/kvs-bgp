@@ -9,7 +9,6 @@ use warp::{self, Filter};
 
 use kvs_bgp::{api, store::KvStore};
 
-
 #[derive(StructOpt, Debug)]
 #[structopt(
     name = "kvs_bgp",
@@ -20,12 +19,13 @@ use kvs_bgp::{api, store::KvStore};
 ]
 /// KVS-BGP Server
 pub struct Args {
+    /// Host address to use for HTTP API
     #[structopt(short, long, default_value = "127.0.0.1")]
     address: IpAddr,
     /// Host port to use for HTTP API
     #[structopt(short, long, default_value = "3030")]
     port: u16,
-    /// Show debug logs (additive for trace logs)
+    /// Log verbosity (additive [-vv] for debug, trace, etc.)
     #[structopt(short, parse(from_occurrences))]
     pub verbose: u8,
 }

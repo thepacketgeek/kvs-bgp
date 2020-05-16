@@ -61,15 +61,12 @@ addr: |BF51: seq #  :                  data                      | /128
 
 ### Notes:
 - BF51 Prefix
-- Used for easy identification and to make sure this
-    doesn't clobber public routes
+  - Used for easy identification and to make sure this doesn't clobber public routes
 - Sequence Number
-- Provides ordering for data decoding and creates unique routes
-    so best-path selection doesn't filter prefixes
-- Allows for 65_535 prefixes per `KeyValue` pair, and given 12 bytes per prefix
-    provides ~768 Kb per `KeyValue` pair
+  - Provides ordering for data decoding and creates unique routes so best-path selection doesn't filter prefixes
+  - Allows for 65_535 prefixes per `KeyValue` pair, and given 12 bytes per prefix provides ~768 Kb per `KeyValue` pair
 - Data
-- Serialized to bytes using [Serde](https://github.com/serde-rs/serde) with [bincode](https://github.com/servo/bincode) serialization
+  - Serialized to bytes using [Serde](https://github.com/serde-rs/serde) with [bincode](https://github.com/servo/bincode) serialization
 
 
 ## `NextHop` encoding is as follows:
@@ -80,20 +77,15 @@ addr: |BF51: version : seq # : rsvd :       key hash             | /128
 ```
 
 ### Notes:
-- BF51 Prefix
-- Used for easy identification and to make sure this
-    doesn't clobber public routes
 - Version
-- Encoding of the `KeyValue` version number
-- During convergence of an updated `KeyValue` pair, will provide unique Prefix/NextHop route
-    so bytes of different versions aren't interlaced together
+  - Encoding of the `KeyValue` version number
+  - During convergence of an updated `KeyValue` pair, will provide unique Prefix/NextHop route so bytes of different versions aren't interlaced together
 - Sequence Number
-- Provides ordering for data decoding and creates unique routes
-    so best-path selection doesn't filter prefixes
+  - Provides ordering for data decoding and creates unique routes so best-path selection doesn't filter prefixes
 - Reserved
-- Not currently used
+  - Not currently used
 - Key Hash
-- Hash of the `KeyValue` `Key`, to differentiate this `NextHop` from other `KeyValue` `NextHop`s
+  - Hash of the `KeyValue` `Key`, to differentiate this `NextHop` from other `KeyValue` `NextHop`s
 
 ## Example
 The `KeyValue` pair "MyKey" : "Some Value" would be represented as:
