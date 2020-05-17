@@ -5,8 +5,7 @@ use structopt::StructOpt;
 
 use env_logger::Builder;
 use log::{info, LevelFilter};
-use tokio::sync::Mutex;
-use warp;
+use tokio::sync::{mpsc, RwLock};
 
 use kvs_bgp::{api, peering::BgpPeerings, store::KvStore};
 
@@ -47,7 +46,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         0 => (LevelFilter::Info, LevelFilter::Warn),
         1 => (LevelFilter::Debug, LevelFilter::Warn),
         2 => (LevelFilter::Trace, LevelFilter::Warn),
-        3 | _ => (LevelFilter::Trace, LevelFilter::Trace),
+        _ => (LevelFilter::Trace, LevelFilter::Trace),
     };
     Builder::new()
         .filter(Some("kvs_bgp"), kvs_level)
@@ -55,12 +54,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .init();
     info!("Logging at levels {}/{}", kvs_level, other_level);
 
-    let kv_store = Arc::new(Mutex::new(KvStore::new()));
+    let kv_store = Arc::new(RwLock::new(KvStore::new()));
+    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
 
     let mut bgp_server =
-        BgpPeerings::with_config(&args.config_path, args.bgp_address, args.bgp_port).await?;
+        BgpPeerings::from_config(&args.config_path, args.bgp_address, args.bgp_port).await?;
 
-    let api_routes = api::get_routes(kv_store.clone());
+    // Start the HTTP API server in a thread, updating the KvStore
+    let api_routes = api::get_routes(kv_store.clone(), outbound_tx);
     tokio::spawn(async move {
         info!(
             "Starting HTTP API on {}:{}",
@@ -71,7 +72,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .await;
     });
 
-    bgp_server.serve().await?;
-
+    // Run the BGP daemon
+    // Injecting inbound updates into KvStore and outbound updates to peers
+    bgp_server.run(kv_store, outbound_rx).await?;
     Ok(())
 }

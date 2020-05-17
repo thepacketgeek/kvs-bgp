@@ -1,11 +1,9 @@
-#[allow(dead_code)]
 use std::collections::hash_map::DefaultHasher;
 use std::convert::{AsRef, From, TryFrom};
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
-use std::net::Ipv6Addr;
+use std::net::{IpAddr, Ipv6Addr};
 
-use bincode;
 use bytes::{BufMut, BytesMut};
 use itertools::{chain, enumerate, Itertools};
 use serde::{de::DeserializeOwned, Serialize};
@@ -224,6 +222,12 @@ impl From<&BytesMut> for Prefix {
     }
 }
 
+impl From<&Prefix> for IpAddr {
+    fn from(prefix: &Prefix) -> Self {
+        IpAddr::V6(prefix.0)
+    }
+}
+
 /// An IPv6 Unicast Next Hop to encode details about a [KeyValue](struct.KeyValue.html) pair
 #[derive(Clone, Debug)]
 pub struct NextHop(Ipv6Addr);
@@ -263,16 +267,30 @@ impl From<&BytesMut> for NextHop {
     }
 }
 
+impl From<&NextHop> for IpAddr {
+    fn from(next_hop: &NextHop) -> Self {
+        IpAddr::V6(next_hop.0)
+    }
+}
+
 /// One of many [Prefix](struct.Prefix.html)/[NextHop](struct.NextHop.html) pairs used to encode a [KeyValue](struct.KeyValue.html) pair in BGP Messages
 ///
 /// Collected in sequential order as a `RouteCollection` for encoding & decoding
 #[derive(Clone, Debug)]
 pub struct Route {
-    prefix: Prefix,
-    next_hop: NextHop,
+    /// BGP Update IPv6 Prefix to advertise (assumed /128 mask)
+    pub prefix: Prefix,
+    /// BGP Update IPv6 NextHop to advertise
+    pub next_hop: NextHop,
 }
 
 impl Route {
+    /// Determine if this has a BF51 prefix
+    fn has_valid_prefix(&self) -> bool {
+        ADDR_PREFIX[..] == self.prefix.0.octets()[..2]
+            && ADDR_PREFIX[..] == self.next_hop.0.octets()[..2]
+    }
+
     fn sequence(&self) -> u16 {
         self.prefix.sequence()
     }
@@ -283,18 +301,14 @@ impl Route {
 pub struct RouteCollection(Vec<Route>);
 
 impl RouteCollection {
-    fn from_routes(mut routes: Vec<Route>) -> Result<Self, KvsError> {
+    fn from_routes(mut routes: Vec<Route>) -> Self {
         routes.sort_by_key(|r| r.sequence());
-        // Confirm this collection contains all the necessary routes
-        for (i, route) in routes.iter().enumerate() {
-            if route.sequence() != i as u16 {
-                return Err(KvsError::DecodeError(format!(
-                    "Missing route sequence # {}",
-                    i
-                )));
-            }
-        }
-        Ok(Self(routes))
+        Self(routes)
+    }
+
+    /// Iterate through contained routes in sorted order (by sequence number)
+    pub fn iter(&self) -> impl Iterator<Item = &Route> {
+        self.0.iter()
     }
 }
 
@@ -306,8 +320,7 @@ where
     type Error = KvsError;
 
     fn try_from(kv: &KeyValue<K, V>) -> Result<Self, Self::Error> {
-        let num_routes =
-            f32::from(((kv.key.len() + kv.value.len()) as f32) / 96f32).ceil() as usize;
+        let num_routes = ((kv.key.len() + kv.value.len()) as f32 / 96f32).ceil() as usize;
         let mut routes: Vec<Route> = Vec::with_capacity(num_routes);
 
         // Encode the K/V lengths for the first prefix
@@ -346,7 +359,7 @@ where
 
             routes.push(Route { prefix, next_hop });
         }
-        RouteCollection::from_routes(routes)
+        Ok(RouteCollection::from_routes(routes))
     }
 }
 
@@ -361,7 +374,7 @@ where
         let first = routes
             .0
             .first()
-            .ok_or_else(|| KvsError::DecodeError(format!("At least one route should exist")))?;
+            .ok_or_else(|| KvsError::DecodeError("At least one route should exist".to_owned()))?;
 
         let key_length = first.prefix.0.segments()[2];
         let val_length = first.prefix.0.segments()[3];
@@ -371,6 +384,15 @@ where
         let mut hash: Option<u64> = None;
 
         for (i, route) in routes.0.iter().enumerate() {
+            if !route.has_valid_prefix() {
+                return Err(KvsError::DecodeError("Not a KVS-BGP Prefix".to_owned()));
+            }
+            if route.sequence() != i as u16 {
+                return Err(KvsError::DecodeError(format!(
+                    "Missing route sequence # {}",
+                    i
+                )));
+            }
             if i == 0 {
                 version.replace(route.next_hop.version());
                 hash.replace(route.next_hop.hash());
@@ -382,11 +404,11 @@ where
 
         let (key, bytes) = bytes.split_at(key_length as usize);
         let (value, _) = bytes.split_at(val_length as usize);
-        let version = version.ok_or_else(|| KvsError::DecodeError(format!("Missing version")))?;
+        let version = version.ok_or_else(|| KvsError::DecodeError("Missing version".to_owned()))?;
         let key = bincode::deserialize(&key)
-            .map_err(|_e| KvsError::DecodeError(format!("Couldn't decode key")))?;
+            .map_err(|_e| KvsError::DecodeError("Couldn't decode key".to_owned()))?;
         let value = bincode::deserialize(&value)
-            .map_err(|_e| KvsError::DecodeError(format!("Couldn't decode value")))?;
+            .map_err(|_e| KvsError::DecodeError("Couldn't decode value".to_owned()))?;
         let kv = Self::with_version(key, value, version);
         Ok(kv)
     }
@@ -452,6 +474,20 @@ mod tests {
     }
 
     #[test]
+    fn has_valid_prefix() {
+        let route = Route {
+            prefix: Prefix("BF51:10::2".parse().unwrap()),
+            next_hop: NextHop("bf51:A::2".parse().unwrap()),
+        };
+        assert!(route.has_valid_prefix());
+        let route = Route {
+            prefix: Prefix("2001:10::2".parse().unwrap()),
+            next_hop: NextHop("bf51:A::2".parse().unwrap()),
+        };
+        assert!(!route.has_valid_prefix());
+    }
+
+    #[test]
     fn missing_route() {
         let kv = KeyValue::new(
             "MyKey".to_owned(),
@@ -461,8 +497,8 @@ mod tests {
             let rc: RouteCollection = (&kv).try_into().unwrap();
             rc.0
         };
-        let modified_routes = [&routes[0..3], &routes[4..]].concat();
-        let rc = RouteCollection::from_routes(modified_routes);
-        assert!(rc.is_err());
+        let missing_rc = RouteCollection::from_routes([&routes[0..3], &routes[4..]].concat());
+        let kv2: Result<KeyValue<String, String>, _> = (&missing_rc).try_into();
+        assert!(kv2.is_err());
     }
 }

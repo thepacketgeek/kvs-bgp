@@ -82,7 +82,6 @@ pub mod store;
 pub use store::KvStore;
 
 use thiserror::Error;
-use warp;
 
 /// Main error for Kvs library
 #[derive(Error, Debug)]
@@ -91,6 +90,8 @@ pub enum KvsError {
     DecodeError(String),
     #[error("Could not encode: {0}")]
     EncodeError(String),
+    #[error("{0}")]
+    Other(String),
 }
 
 impl warp::reject::Reject for KvsError {}
