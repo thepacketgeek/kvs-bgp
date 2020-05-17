@@ -12,13 +12,8 @@ A Key/Value store that allows for eventually consistent, distributed synchroniza
   - E.g. [exabgp](https://github.com/Exa-Networks/exabgp), [gobgp](https://github.com/osrg/gobgp), [bgpd-rs](https://github.com/thepacketgeek/bgpd-rs)
 
 ## HTTP API for KeyValue CRUD
-Run the HTTP API with:
-```
-$ cargo run -- --port 8179
-```
-
-Then use your favorite HTTP client to make requests:
-```
+Your favorite HTTP client can make requests to get/insert/remove `KeyValue` pairs:
+```sh
 $ curl http://localhost:8179/insert/name/Mat --request PUT
 $ curl http://localhost:8179/get/name
 Mat
@@ -35,6 +30,10 @@ Pizza
 
 ## Key/Value API
 The current API is just PoC and should likely replicate other successful KeyValue APIs to work with existing clients (Eg. Redis)
+
+## Run kvs-bgp locally
+See how to setup and run a `kvs-bgp` environment locally in the [Examples](./examples) directory.
+
 
 # Internal representation of `KeyValue` pairs
 
