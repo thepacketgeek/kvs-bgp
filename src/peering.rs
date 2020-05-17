@@ -3,6 +3,8 @@
 //! Uses [bgpd-rs](https://github.com/thepacketgeek/bgpd-rs) for session management
 //! and RIB storage of pending updates
 
+use std::collections::HashMap;
+use std::convert::TryInto;
 use std::error::Error;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -11,7 +13,7 @@ use bgp_rs::{MPUnreachNLRI, NLRIEncoding, PathAttribute, AFI, SAFI};
 use bgpd::{
     config::{self, ServerConfig},
     rib::{Family, RIB},
-    session::SessionManager,
+    session::{SessionManager, SessionUpdate},
 };
 use log::{debug, trace};
 use tokio::{
@@ -20,7 +22,10 @@ use tokio::{
     sync::{mpsc, watch, RwLock},
 };
 
-use crate::store::{KvStore, Update as KvUpdate};
+use crate::{
+    kv::{KeyValue, Route, RouteCollection},
+    store::{KvStore, Update as KvUpdate},
+};
 
 /// Struct for interacting with BGP Peers
 ///
@@ -68,12 +73,32 @@ impl BgpPeerings {
         kv_store: Arc<RwLock<KvStore>>,
         mut outbound_updates: mpsc::UnboundedReceiver<KvUpdate>,
     ) -> Result<(), Box<dyn Error>> {
+        // BGP Updates from peers may come in multiple messages
+        // Keep any routes that have come in a HashMap, keyed by file hash
+        // and only decode once all messages for a KeyValue version are received
+        let mut pending_routes: HashMap<u64, Vec<Route>> = HashMap::new();
+
         loop {
             let mut sessions = self.sessions.write().await;
             tokio::select! {
                 update = sessions.get_update(self.rib.clone()) => {
-                    if let Ok(Some(update)) = update {
-                        trace!("Bgp update: {:?}", update);
+                    if let Ok(Some(SessionUpdate::Learned((_, update)))) = update {
+                        if let Ok(route) = TryInto::<Route>::try_into(&update) {
+                            let hash = route.hash();
+                            let kv_length = route.collection_length();
+                            trace!("Bgp update: {} {:?}", hash, route);
+                            let routes = pending_routes.entry(hash).or_insert_with(|| vec![]);
+                            routes.push(route);
+                            trace!("Bgp update: {} [{}/{}]", hash, routes.len(), kv_length);
+
+                            if routes.len() == kv_length {
+                                let full_routes = pending_routes.remove(&hash).expect("Hash is in map");
+                                let collection = RouteCollection::from_routes(full_routes);
+                                if let Ok(kv) = TryInto::<KeyValue<String, String>>::try_into(&collection) {
+                                    kv_store.write().await.insert_from_peer(kv);
+                                }
+                            }
+                        }
                     }
                 },
                 outbound_update = outbound_updates.recv() => {

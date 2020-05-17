@@ -71,6 +71,21 @@ impl KvStore {
             Ok(None)
         }
     }
+
+    /// Insert a new/updated `KeyValue` from a BGP Peer
+    ///
+    /// Checks for the newest version (will not evict a newer internal version)
+    /// and does not trigger outbound updates
+    pub fn insert_from_peer(&mut self, pair: KeyValue<String, String>) {
+        let key = pair.key().clone();
+        if let Some(existing) = self.inner.get(&key) {
+            if existing.version() > pair.version() {
+                // This is an old update, ignore
+                return;
+            }
+        }
+        self.inner.insert(key, pair);
+    }
 }
 
 /// A Pending update to be sent to BGP Peers

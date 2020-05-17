@@ -4,6 +4,7 @@ use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv6Addr};
 
+use bgp_rs::{Identifier, NLRIEncoding, PathAttribute, Update};
 use bytes::{BufMut, BytesMut};
 use itertools::{chain, enumerate, Itertools};
 use serde::{de::DeserializeOwned, Serialize};
@@ -134,6 +135,11 @@ where
         Self::with_version(key, value, 0)
     }
 
+    /// Get a ref to the `KeyValue` `Key`
+    pub fn key(&self) -> &K {
+        &self.key.inner
+    }
+
     fn with_version(key: K, value: V, version: u16) -> Self {
         let _key = Key::new(key);
         let hash = _key.get_hash();
@@ -153,6 +159,14 @@ where
 
     fn as_bytes(&self) -> Vec<u8> {
         [self.key.as_bytes(), self.value.as_bytes()].concat()
+    }
+
+    /// Calculate the number of [Route](struct.Route.html)s needed to encode
+    /// this `KeyValue` pair
+    pub fn number_of_routes(&self) -> usize {
+        // Sum the length fields and the length of key & value,
+        // divided by 96 bits per `Prefix`
+        ((self.key.len() + self.value.len() + 4) as f32 / CHUNK_SIZE as f32).ceil() as usize
     }
 
     fn key_hash(&self) -> u64 {
@@ -215,10 +229,7 @@ impl AsRef<Ipv6Addr> for Prefix {
 
 impl From<&BytesMut> for Prefix {
     fn from(bytes: &BytesMut) -> Self {
-        let mut octets = [0u8; 16];
-        octets.copy_from_slice(&bytes[..16]);
-        let prefix = Ipv6Addr::from(octets);
-        Self(prefix)
+        Self(octets_to_ip(&bytes[..16]))
     }
 }
 
@@ -243,8 +254,13 @@ impl NextHop {
         self.0.segments()[2]
     }
 
+    /// The encoded number of routes for the encoded `KeyValue`
+    fn collection_length(&self) -> u16 {
+        self.0.segments()[3]
+    }
+
     /// The `Key` hash for this [KeyValue](struct.KeyValue.html)
-    pub fn hash(&self) -> u64 {
+    fn hash(&self) -> u64 {
         let mut data = [0u8; 8];
         data.copy_from_slice(&self.0.octets()[8..]);
         u64::from_be_bytes(data)
@@ -260,10 +276,7 @@ impl AsRef<Ipv6Addr> for NextHop {
 
 impl From<&BytesMut> for NextHop {
     fn from(bytes: &BytesMut) -> Self {
-        let mut octets = [0u8; 16];
-        octets.copy_from_slice(&bytes[..16]);
-        let next_hop = Ipv6Addr::from(octets);
-        Self(next_hop)
+        Self(octets_to_ip(&bytes[..16]))
     }
 }
 
@@ -285,14 +298,87 @@ pub struct Route {
 }
 
 impl Route {
+    /// Create a `Route` object from prefix & next_hop `Ipv6Addr`s
+    pub fn from_addrs(prefix: Ipv6Addr, next_hop: Ipv6Addr) -> Self {
+        Self {
+            prefix: Prefix(prefix),
+            next_hop: NextHop(next_hop),
+        }
+    }
+
     /// Determine if this has a BF51 prefix
     fn has_valid_prefix(&self) -> bool {
         ADDR_PREFIX[..] == self.prefix.0.octets()[..2]
             && ADDR_PREFIX[..] == self.next_hop.0.octets()[..2]
     }
 
+    pub fn hash(&self) -> u64 {
+        self.next_hop.hash()
+    }
+
+    pub fn collection_length(&self) -> usize {
+        self.next_hop.collection_length() as usize
+    }
+
     fn sequence(&self) -> u16 {
         self.prefix.sequence()
+    }
+}
+
+// This needs some major cleanup, it's a pain to do all the matching for BGP Update PathAttributes
+impl TryFrom<&Update> for Route {
+    type Error = KvsError;
+
+    fn try_from(update: &Update) -> Result<Self, Self::Error> {
+        if let Some(PathAttribute::MP_REACH_NLRI(mp_reach)) = update.get(Identifier::MP_REACH_NLRI)
+        {
+            if let Some(nlri) = mp_reach.announced_routes.first() {
+                if let NLRIEncoding::IP(prefix) = nlri {
+                    let addr: IpAddr = prefix.into();
+                    if let IpAddr::V6(v6) = addr {
+                        let next_hop = octets_to_ip(&mp_reach.next_hop);
+                        let route = Route::from_addrs(v6, next_hop);
+                        if route.has_valid_prefix() {
+                            return Ok(route);
+                        }
+                    }
+                }
+            }
+            return Err(KvsError::NotAKvsRoute);
+        } else if let Some(PathAttribute::MP_UNREACH_NLRI(mp_unreach)) =
+            update.get(Identifier::MP_UNREACH_NLRI)
+        {
+            // These are KeyValue pairs removed from remote servers
+            // Collect and remove from local store
+            let next_hop: Option<Ipv6Addr> =
+                if let Some(PathAttribute::NEXT_HOP(next_hop)) = update.get(Identifier::NEXT_HOP) {
+                    if let IpAddr::V6(v6) = next_hop {
+                        Some(*v6)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+            let next_hop = if let Some(next_hop) = next_hop {
+                next_hop
+            } else {
+                return Err(KvsError::NotAKvsRoute);
+            };
+            if let Some(nlri) = mp_unreach.withdrawn_routes.first() {
+                if let NLRIEncoding::IP(prefix) = nlri {
+                    let addr: IpAddr = prefix.into();
+                    if let IpAddr::V6(v6) = addr {
+                        let route = Route::from_addrs(v6, next_hop);
+                        if route.has_valid_prefix() {
+                            return Ok(route);
+                        }
+                    }
+                }
+            }
+            return Err(KvsError::NotAKvsRoute);
+        }
+        Err(KvsError::NotAKvsRoute)
     }
 }
 
@@ -301,7 +387,8 @@ impl Route {
 pub struct RouteCollection(Vec<Route>);
 
 impl RouteCollection {
-    fn from_routes(mut routes: Vec<Route>) -> Self {
+    /// Construct a `RouteCollection` from a vec of `Route`s
+    pub fn from_routes(mut routes: Vec<Route>) -> Self {
         routes.sort_by_key(|r| r.sequence());
         Self(routes)
     }
@@ -320,7 +407,7 @@ where
     type Error = KvsError;
 
     fn try_from(kv: &KeyValue<K, V>) -> Result<Self, Self::Error> {
-        let num_routes = ((kv.key.len() + kv.value.len()) as f32 / 96f32).ceil() as usize;
+        let num_routes = kv.number_of_routes();
         let mut routes: Vec<Route> = Vec::with_capacity(num_routes);
 
         // Encode the K/V lengths for the first prefix
@@ -352,7 +439,7 @@ where
             next_hop_buf.put(&ADDR_PREFIX[..]);
             next_hop_buf.put_u16(kv.version);
             next_hop_buf.put_u16(i as u16);
-            next_hop_buf.put_u16(0u16); // Reserved
+            next_hop_buf.put_u16(num_routes as u16);
             next_hop_buf.put_u64(kv.key_hash());
             let next_hop: NextHop = (&next_hop_buf).into();
             next_hop_buf.clear();
@@ -414,6 +501,14 @@ where
     }
 }
 
+/// Convert a [u8] slice (with at least 16 x u8) into an Ipv6 addr
+#[inline]
+fn octets_to_ip(bytes: &[u8]) -> Ipv6Addr {
+    let mut octets = [0u8; 16];
+    octets.copy_from_slice(&bytes[..16]);
+    Ipv6Addr::from(octets)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,6 +546,14 @@ mod tests {
             vec![5, 0, 0, 0, 0, 0, 0, 0, 109, 121, 75, 101, 121, 42, 0, 0, 0]
         );
         assert_eq!(&kv1.to_string(), "myKey | 42");
+        assert_eq!(kv1.number_of_routes(), 2);
+
+        let kv2 = KeyValue::new(
+            "myKey".to_owned(),
+            "This is a really long value that should use a few more routes than the last"
+                .to_owned(),
+        );
+        assert_eq!(kv2.number_of_routes(), 9);
     }
 
     #[test]

@@ -38,8 +38,8 @@
 //! ## [NextHop](struct.NextHop.html) encoding is as follows:
 //!
 //! ```ignore
-//! bits: | 16 :   16    :  16   :  16  :          64                |
-//! addr: |BF51: version : seq # : rsvd :       key hash             | /128
+//! bits: | 16 :   16    :  16   :    16    :          64            |
+//! addr: |BF51: version : seq # : # routes :       key hash         | /128
 //! ```
 //!
 //! ### Notes:
@@ -50,18 +50,19 @@
 //! - Sequence Number
 //!   - Provides ordering for data decoding and creates unique routes
 //!     so best-path selection doesn't filter prefixes
-//! - Reserved
-//!   - Not currently used  *(TODO: Use this for store action (Add, Update, Remove?))*
+//! - Number of Routes
+//!   - Count of routes included in this version
+//!   - Used to confirm when all routes have been received before decoding
 //! - Key Hash
 //!   - Hash of the [KeyValue](struct.KeyValue.html) [Key](struct.Key.html), to differentiate this [NextHop](struct.NextHop.html) from other [KeyValue](struct.KeyValue.html) [NextHop](struct.NextHop.html)s
 //!
 //! ## Example
 //! The [KeyValue](struct.KeyValue.html) pair "MyKey" : "Some Value" would be represented as:
 //! ```ignore
-//! | Seq # | Prefix                                   | NextHop                              |
-//! | 0     | BF51:0:D:12:500::                   /128 | BF51::7911:E0FA:7BEA:920B       /128 |
-//! | 1     | BF51:1:4D79:4B65:790A::             /128 | BF51:0:1:0:7911:E0FA:7BEA:920B  /128 |
-//! | 2     | BF51:2:53:6F6D:6520:5661:6C75:6500  /128 | BF51:0:2:0:7911:E0FA:7BEA:920B  /128 |
+//! | Seq # | Prefix                                   | NextHop                        |
+//! | 0     | BF51:0:D:12:500::                   /128 | BF51::3:7911:E0FA:7BEA:920B    |
+//! | 1     | BF51:1:4D79:4B65:790A::             /128 | BF51:0:1:3:7911:E0FA:7BEA:920B |
+//! | 2     | BF51:2:53:6F6D:6520:5661:6C75:6500  /128 | BF51:0:2:3:7911:E0FA:7BEA:920B |
 //! ```
 //!
 //! ## KvStore
@@ -90,8 +91,8 @@ pub enum KvsError {
     DecodeError(String),
     #[error("Could not encode: {0}")]
     EncodeError(String),
-    #[error("{0}")]
-    Other(String),
+    #[error("Not a Kvs Route")]
+    NotAKvsRoute,
 }
 
 impl warp::reject::Reject for KvsError {}

@@ -47,14 +47,14 @@ is serialized as `Prefix`es with sorted sequence numbers.
 ## `Prefix` encoding is as follows:
 
 First prefix for a `KeyValue` pair:
-```ignore
+```sh
 bits: | 16 :  16    :    16      :     16       :      64        |
 addr: |BF51: seq #  : key length : value length :     data       | /128
 ```
 
 Subsequent prefixes for a `KeyValue` pair:
 
-```ignore
+```sh
 bits: | 16 :  16    :                   96                       |
 addr: |BF51: seq #  :                  data                      | /128
 ```
@@ -71,9 +71,9 @@ addr: |BF51: seq #  :                  data                      | /128
 
 ## `NextHop` encoding is as follows:
 
-```ignore
-bits: | 16 :   16    :  16   :  16  :          64                |
-addr: |BF51: version : seq # : rsvd :       key hash             | /128
+```sh
+bits: | 16 :   16    :  16   :    16    :          64            |
+addr: |BF51: version : seq # : # routes :       key hash         | /128
 ```
 
 ### Notes:
@@ -82,16 +82,17 @@ addr: |BF51: version : seq # : rsvd :       key hash             | /128
   - During convergence of an updated `KeyValue` pair, will provide unique Prefix/NextHop route so bytes of different versions aren't interlaced together
 - Sequence Number
   - Provides ordering for data decoding and creates unique routes so best-path selection doesn't filter prefixes
-- Reserved
-  - Not currently used
+- Number of Routes
+  - Count of routes included in this version
+  - Used to confirm when all routes have been received before decoding
 - Key Hash
   - Hash of the `KeyValue` `Key`, to differentiate this `NextHop` from other `KeyValue` `NextHop`s
 
 ## Example
 The `KeyValue` pair "MyKey" : "Some Value" would be represented as:
-```ignore
-| Seq # | Prefix                                   | NextHop                              |
-| 0     | BF51:0:D:12:500::                   /128 | BF51::7911:E0FA:7BEA:920B       /128 |
-| 1     | BF51:1:4D79:4B65:790A::             /128 | BF51:0:1:0:7911:E0FA:7BEA:920B  /128 |
-| 2     | BF51:2:53:6F6D:6520:5661:6C75:6500  /128 | BF51:0:2:0:7911:E0FA:7BEA:920B  /128 |
+```sh
+| Seq # | Prefix                                   | NextHop                        |
+| 0     | BF51:0:D:12:500::                   /128 | BF51::3:7911:E0FA:7BEA:920B    |
+| 1     | BF51:1:4D79:4B65:790A::             /128 | BF51:0:1:3:7911:E0FA:7BEA:920B |
+| 2     | BF51:2:53:6F6D:6520:5661:6C75:6500  /128 | BF51:0:2:3:7911:E0FA:7BEA:920B |
 ```
